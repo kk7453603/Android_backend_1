@@ -1,0 +1,169 @@
+definitions:
+  models.ChangePasswordRequest:
+    properties:
+      new_password:
+        type: string
+      old_password:
+        type: string
+    type: object
+  models.RegUser:
+    properties:
+      login:
+        type: string
+      password:
+        type: string
+    type: object
+  models.Response:
+    properties:
+      Payload: {}
+      Status:
+        type: integer
+    type: object
+  models.Response_Error:
+    properties:
+      Error:
+        type: string
+    type: object
+  models.UserRegistration:
+    properties:
+      nickname:
+        type: string
+      password:
+        type: string
+    type: object
+info:
+  contact:
+    email: support@example.com
+    name: API Support
+    url: http://www.example.com/support
+  description: This is an authentication service API.
+  title: Auth Service API
+  version: "1.0"
+paths:
+  /api/createToken:
+    post:
+      consumes:
+      - application/json
+      description: Generates new access and refresh tokens for a user
+      parameters:
+      - description: User Credentials
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/models.RegUser'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.Response_Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.Response_Error'
+      summary: Create new access and refresh tokens
+      tags:
+      - Authentication
+  /api/updateToken:
+    post:
+      consumes:
+      - application/json
+      description: Refreshes tokens using provided refresh token
+      parameters:
+      - description: Refresh Token
+        in: formData
+        name: refresh_token
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.Response_Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.Response_Error'
+      summary: Refresh access and refresh tokens
+      tags:
+      - Authentication
+  /api/user/changePassword:
+    post:
+      consumes:
+      - application/json
+      description: Allows an authenticated user to change their password
+      parameters:
+      - description: Password Change Request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/models.ChangePasswordRequest'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.Response_Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.Response_Error'
+      security:
+      - JWT: []
+      summary: Change user password
+      tags:
+      - User Management
+  /api/user/register:
+    post:
+      consumes:
+      - application/json
+      description: Registers a new user with email, password, and nickname
+      parameters:
+      - description: User Registration Data
+        in: body
+        name: user
+        required: true
+        schema:
+          $ref: '#/definitions/models.UserRegistration'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/models.Response'
+        "400":
+          description: Bad Request
+          schema:
+            $ref: '#/definitions/models.Response_Error'
+        "500":
+          description: Internal Server Error
+          schema:
+            $ref: '#/definitions/models.Response_Error'
+      summary: Register a new user
+      tags:
+      - User Management
+securityDefinitions:
+  JWT:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

@@ -1,27 +1,35 @@
 package models
 
-type UserToken struct {
-	Login        string
-	Password     string
-	RefreshToken string
-	AccessToken  string
-}
-
 type User struct {
-	Login    string `json:"login" form:"login"`
-	Password string `json:"password" form:"password"`
+	Login        string `json:"login"`
+	Password     string `json:"password"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
 }
 
-type Create_Token struct {
-	Grant_type string `json:"grant_type"`
-	Username   string `json:"username"`
-	Password   string `json:"password"`
-	DeviceInfo string `json:"deviceInfo"`
-	IsMoblie   bool   `json:"isMobile,omitempty"`
-	DeviceId   string `json:"deviceId,omitempty"`
+func (u *RegUser) ForDomain() *User {
+	return &User{
+		Login:    u.Login,
+		Password: u.Password,
+	}
 }
 
-type Update_Token struct {
-	Grant_type    string `json:"grant_type"`
-	Refresh_token string `json:"refresh_token"`
+type RegUser struct {
+	Login    string `json:"login"`
+	Password string `json:"password"`
+}
+
+type ResponseError struct {
+	Error string `json:"error"`
+}
+
+type ResponseOK struct {
+	Status string `json:"status"`
+}
+
+type UserToken struct {
+	Login        string `json:"login"`
+	Password     string `json:"password,omitempty"`
+	RefreshToken string `json:"refresh_token"`
+	AccessToken  string `json:"access_token"`
 }

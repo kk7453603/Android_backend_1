@@ -1,26 +1,23 @@
 package service
 
 import (
-	customErrors "auth_service/internal/errors"
 	"auth_service/internal/jwt"
 	"auth_service/internal/models"
-	"time"
+	"errors"
+	"os"
+
+	customErrors "auth_service/internal/errors"
 
 	"github.com/labstack/echo/v4"
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:generate mockgen -source=service.go -destination=mocks/mock.go
 type Repository interface {
-	InsertUser(models.UserToken) error
-	UpdateUser(models.UserToken) error
-	GetToken(string, string) (string, error)
-	CheckUser(string, string) (bool, error)
-	RegisterUser(models.UserRegistration, models.UserToken) error
-	ChangePassword(login, oldPassword, newPassword string) error
-	RecoverPassword(email string) error
-	ConfirmEmail(newEmail string) error
-	ConfirmCode(code string) (bool, error)
-	RequestDeletion(login string) error
+	InsertUser(user models.UserToken) error
+	GetUserByLogin(login string) (*models.User, error)
+	UpdateTokens(login, accessToken, refreshToken string) error
+	Changepasswd(login, newpasswd string) error
 }
 
 type Service struct {
@@ -28,140 +25,156 @@ type Service struct {
 	logger echo.Logger
 }
 
-func New(rep Repository) *Service {
-	return &Service{repo: rep}
+func New(rep Repository, logger echo.Logger) *Service {
+	return &Service{repo: rep, logger: logger}
 }
 
 func (s *Service) InsertUser(userData models.UserToken) error {
-	isExists, err := s.repo.CheckUser(userData.Login, userData.Password)
-	if err != nil {
-		s.logger.Errorf("Cannot get data: %v", err)
-		return err
+	// Проверяем, существует ли пользователь
+	user, err := s.repo.GetUserByLogin(userData.Login)
+	if user != nil {
+		s.logger.Errorf("User already exists: %s", userData.Login)
+		return errors.New("user already exists")
 	}
-	if isExists {
-		hashedToken, err := jwt.HashRefresh(userData.RefreshToken)
-		if err != nil {
-			s.logger.Errorf("Cannot hash refresh token: %v", err)
-			return err
-		}
-		userData.RefreshToken = hashedToken
-		if err = s.repo.UpdateUser(userData); err != nil {
-			s.logger.Errorf("Cannot insert user: %v", err)
-			return err
-		}
-		return nil
-	}
-	hashedToken, err := jwt.HashRefresh(userData.RefreshToken)
-	if err != nil {
-		s.logger.Errorf("Cannot hash refresh token: %v", err)
-		return err
-	}
-	userData.RefreshToken = hashedToken
 
+	if err != nil {
+		s.logger.Errorf("GetUserByLogin error: %s", err)
+		return err
+	}
+
+	// Хэшируем пароль перед сохранением
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(userData.Password), bcrypt.DefaultCost)
+	if err != nil {
+		s.logger.Errorf("Error hashing password: %v", err)
+		return err
+	}
+	userData.Password = string(hashedPassword)
+
+	// Сохраняем пользователя
 	if err := s.repo.InsertUser(userData); err != nil {
-		s.logger.Errorf("Cannot insert user: %v", err)
+		s.logger.Errorf("Error inserting user: %v", err)
 		return err
 	}
-
 	return nil
 }
 
-func (s *Service) RefreshUser(userData models.UserToken) (models.UserToken, error) {
-	accessToken := userData.AccessToken
-	refreshToken := userData.RefreshToken
-	accessClaims, err := jwt.ParseAccess(accessToken)
+func (s *Service) RefreshUser(refreshToken string) (models.UserToken, error) {
+	// Валидация refresh токена
+	token, err := jwt.ValidateToken(refreshToken, os.Getenv("SECRET"))
 	if err != nil {
-		s.logger.Errorf("Error to parse access token: %v", err)
-		return models.UserToken{}, err
+		s.logger.Errorf("Invalid refresh token: %v", err)
+		return models.UserToken{}, customErrors.ErrRefreshToken
 	}
-	access_name := accessClaims.Login
-	access_pass := accessClaims.Password
-	accessTime := accessClaims.Time
-	accessSalt := accessClaims.Salt
-
-	refreshClaims, err := jwt.ParseRefresh(refreshToken)
+	claims, err := jwt.GetClaims(token)
 	if err != nil {
-		s.logger.Fatalf("Cannot parse token", err)
-		return models.UserToken{}, err
-	}
-
-	refresh_name := refreshClaims.Login
-	refresh_pass := refreshClaims.Password
-	refreshTime := refreshClaims.Time
-	refreshSalt := refreshClaims.Salt
-
-	if refreshClaims.ExpTime < time.Now().Unix() {
-		s.logger.Error("Refresh token is expired")
-		return models.UserToken{}, customErrors.ErrTokenExpired
-	}
-	if access_name == refresh_name && access_pass == refresh_pass && accessSalt == refreshSalt && refreshTime == accessTime {
-		hashedToken, err := jwt.HashRefresh(refreshToken)
-		if err != nil {
-			s.logger.Errorf("Cannot hash refresh token", err)
-			return models.UserToken{}, err
-		}
-
-		oldToken, err := s.repo.GetToken(userData.Login, userData.Password)
-
-		if err != nil {
-			s.logger.Errorf("Cannot get old token", err)
-		}
-
-		if oldToken != hashedToken {
-			s.logger.Errorf("Refresh tokens doesn't match")
-			return models.UserToken{}, customErrors.ErrTokensMatch
-		}
-		newAccessToken, newRefreshToken, err := jwt.CreateTokens(userData.Login, userData.Password)
-		if err != nil {
-			s.logger.Errorf("Cannot create tokens", err)
-			return models.UserToken{}, err
-		}
-
-		hashedToken, err = jwt.HashRefresh(newRefreshToken)
-		if err != nil {
-			s.logger.Errorf("Cannot hash refresh token", err)
-			return models.UserToken{}, err
-		}
-
-		newData := models.UserToken{Login: userData.Login, Password: userData.Password, AccessToken: newAccessToken, RefreshToken: hashedToken}
-
-		if err = s.repo.UpdateUser(newData); err != nil {
-			s.logger.Errorf("Cannot insert data")
-			return models.UserToken{}, err
-		}
-		newData.RefreshToken = newRefreshToken
-		return newData, nil
-	} else {
-		s.logger.Error("Tokens doesn't match")
+		s.logger.Errorf("Error getting claims from token: %v", err)
 		return models.UserToken{}, customErrors.ErrTokensMatch
 	}
+	login := claims["login"].(string)
 
+	// Получаем пользователя из БД
+	_, err = s.repo.GetUserByLogin(login)
+	if err != nil {
+		s.logger.Errorf("User not found: %v", err)
+		return models.UserToken{}, err
+	}
+
+	// Генерируем новые токены
+	newAccessToken, err := jwt.CreateAccessToken(login)
+	if err != nil {
+		s.logger.Errorf("Error creating access token: %v", err)
+		return models.UserToken{}, customErrors.ErrAccessToken
+	}
+	newRefreshToken, err := jwt.CreateRefreshToken(login)
+	if err != nil {
+		s.logger.Errorf("Error creating refresh token: %v", err)
+		return models.UserToken{}, customErrors.ErrRefreshToken
+	}
+
+	// Обновляем токены в БД
+	if err := s.repo.UpdateTokens(login, newAccessToken, newRefreshToken); err != nil {
+		s.logger.Errorf("Error updating tokens: %v", err)
+		return models.UserToken{}, err
+	}
+
+	return models.UserToken{
+		Login:        login,
+		AccessToken:  newAccessToken,
+		RefreshToken: newRefreshToken,
+	}, nil
 }
 
-func (s *Service) RegisterUser(user models.UserRegistration, tokens models.UserToken) error {
-	if err := s.repo.RegisterUser(user, tokens); err != nil {
-		s.logger.Errorf("Cannot register user: %v", err)
+func (s *Service) RegisterUser(user models.UserRegistration) error {
+	// Проверяем, существует ли пользователь
+	existingUser, err := s.repo.GetUserByLogin(user.Nickname)
+	if err == nil && existingUser != nil {
+		s.logger.Errorf("User already exists: %s", user.Nickname)
+		return errors.New("user already exists")
+	}
+
+	// Хэшируем пароль
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(user.Password), bcrypt.DefaultCost)
+	if err != nil {
+		s.logger.Errorf("Error hashing password: %v", err)
 		return err
+	}
+
+	// Генерируем токены
+	accessToken, err := jwt.CreateAccessToken(user.Nickname)
+	if err != nil {
+		s.logger.Errorf("Error creating access token: %v", err)
+		return err
+	}
+	refreshToken, err := jwt.CreateRefreshToken(user.Nickname)
+	if err != nil {
+		s.logger.Errorf("Error creating refresh token: %v", err)
+		return err
+	}
+
+	// Сохраняем пользователя
+	userData := models.UserToken{
+		Login:        user.Nickname,
+		Password:     string(hashedPassword),
+		AccessToken:  accessToken,
+		RefreshToken: refreshToken,
+	}
+
+	if err := s.repo.InsertUser(userData); err != nil {
+		s.logger.Errorf("Error inserting user: %v", err)
+		return customErrors.ErrUserExists
 	}
 	return nil
 }
 
 func (s *Service) ChangePassword(login, oldPassword, newPassword string) error {
-	return s.repo.ChangePassword(login, oldPassword, newPassword)
+	// Получаем пользователя
+	user, err := s.repo.GetUserByLogin(login)
+	if err != nil {
+		s.logger.Errorf("User not found: %v", err)
+		return err
+	}
+
+	// Проверяем старый пароль
+	if err := bcrypt.CompareHashAndPassword([]byte(user.Password), []byte(oldPassword)); err != nil {
+		s.logger.Errorf("Incorrect old password for user: %s", login)
+		return errors.New("incorrect old password")
+	}
+
+	// Хэшируем новый пароль
+	hashedPassword, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		s.logger.Errorf("Error hashing new password: %v", err)
+		return err
+	}
+
+	// Обновляем пароль в БД
+	if err := s.repo.Changepasswd(login, string(hashedPassword)); err != nil {
+		s.logger.Errorf("Error changing password: %v", err)
+		return err
+	}
+	return nil
 }
 
-func (s *Service) RecoverPassword(email string) error {
-	return s.repo.RecoverPassword(email)
-}
-
-func (s *Service) ConfirmEmail(newEmail string) error {
-	return s.repo.ConfirmEmail(newEmail)
-}
-
-func (s *Service) ConfirmCode(code string) (bool, error) {
-	return s.repo.ConfirmCode(code)
-}
-
-func (s *Service) RequestDeletion(login string) error {
-	return s.repo.RequestDeletion(login)
+func (s *Service) GetUserByLogin(login string) (*models.User, error) {
+	return s.repo.GetUserByLogin(login)
 }

@@ -2,10 +2,10 @@ package app
 
 import (
 	"auth_service/internal/config"
-	"auth_service/pkg/logger"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -17,7 +17,7 @@ const (
 
 func Run() {
 	if err := config.LoadFromEnv(".env"); err != nil {
-		logger.Fatalf("config.LoadFromFile(): %v", err)
+		log.Fatalf("config.LoadFromFile(): %v", err)
 	}
 }
 
@@ -38,14 +38,14 @@ func connectToDatabase(url string) (*pgxpool.Pool, error) {
 
 		pool, err = pgxpool.New(context.Background(), url)
 		if err != nil {
-			logger.Errorf("couldn't connect to the database: %v", err)
+			log.Fatalf("couldn't connect to the database: %v", err)
 			time.Sleep(2 * time.Second)
 
 			retries++
 			continue
 		}
 
-		logger.Infof("successfully connected")
+		log.Println("successfully connected")
 		return pool, nil
 	}
 }
